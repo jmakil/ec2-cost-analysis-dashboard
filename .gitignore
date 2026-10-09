@@ -1,0 +1,13 @@
+# Virtual environments
+venv/
+.venv/
+
+# Generated charts/images
+actual_vs_predicted.png
+ec2_cost_boxplot.png
+t2_cost_distribution.png
+t3_cost_distribution.png
+
+# Python cache files
+__pycache__/
+*.pyc
