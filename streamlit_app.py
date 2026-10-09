@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -78,14 +77,27 @@ model_data['vCPUs'] = pd.to_numeric(
     model_data['vCPUs'].str.extract(r'(\d+)', expand=False)
 )
 
+# Remove rows with missing values needed for regression
 data_cleaned = model_data.dropna(
     subset=['On Demand', 'Instance Memory', 'vCPUs']
 )
 
-X = data_cleaned[['Instance Memory', 'vCPUs']]
+# Remove On-Demand cost outliers using the IQR method
+Q1_model = data_cleaned['On Demand'].quantile(0.25)
+Q3_model = data_cleaned['On Demand'].quantile(0.75)
+IQR_model = Q3_model - Q1_model
 
-# Predict the logarithm of On-Demand cost so transformed predictions stay positive
-y = np.log(data_cleaned['On Demand'])
+lower_bound_model = Q1_model - 1.5 * IQR_model
+upper_bound_model = Q3_model + 1.5 * IQR_model
+
+regression_data = data_cleaned[
+    (data_cleaned['On Demand'] >= lower_bound_model) &
+    (data_cleaned['On Demand'] <= upper_bound_model)
+]
+
+# Define predictors and target using the outlier-filtered data
+X = regression_data[['Instance Memory', 'vCPUs']]
+y = regression_data['On Demand']
 
 X_train, X_test, y_train, y_test = train_test_split(
     X,
@@ -97,13 +109,12 @@ X_train, X_test, y_train, y_test = train_test_split(
 model = LinearRegression()
 model.fit(X_train, y_train)
 
-# Predict log-costs, then convert them back to dollars
-y_pred_log = model.predict(X_test)
-y_pred = np.exp(y_pred_log)
-y_test_actual = np.exp(y_test)
+# Predict On-Demand costs
+y_pred = model.predict(X_test)
 
-mae = mean_absolute_error(y_test_actual, y_pred)
-mse = mean_squared_error(y_test_actual, y_pred)
+# Evaluate the model
+mae = mean_absolute_error(y_test, y_pred)
+mse = mean_squared_error(y_test, y_pred)
 rmse = mse ** 0.5
 
 # Navigation tabs
@@ -243,6 +254,11 @@ with tab4:
     info1.metric("Training Samples", len(X_train))
     info2.metric("Testing Samples", len(X_test))
 
+    st.caption(
+        f"Regression uses {len(regression_data)} rows after removing On-Demand cost outliers "
+        f"with the IQR method (upper bound: ${upper_bound_model:.4f}/hour)."
+    )
+
     col1, col2, col3 = st.columns(3)
     col1.metric("MAE", f"{mae:.4f}")
     col2.metric("MSE", f"{mse:.4f}")
@@ -254,10 +270,10 @@ with tab4:
 
     st.subheader("Actual vs Predicted On-Demand Costs")
     fig_reg, ax_reg = plt.subplots(figsize=(8, 6))
-    ax_reg.scatter(y_test_actual, y_pred, alpha=0.7, color='b')
+    ax_reg.scatter(y_test, y_pred, alpha=0.7, color='b')
     ax_reg.plot(
-        [min(y_test_actual), max(y_test_actual)],
-        [min(y_test_actual), max(y_test_actual)],
+        [min(y_test), max(y_test)],
+        [min(y_test), max(y_test)],
         color='red',
         linestyle='--'
     )
@@ -294,8 +310,7 @@ with tab4:
             columns=['Instance Memory', 'vCPUs']
         )
 
-        predicted_log_cost = model.predict(new_instance)[0]
-        predicted_cost = np.exp(predicted_log_cost)
+        predicted_cost = model.predict(new_instance)[0]
 
         st.success(
             f"Predicted On-Demand Cost: ${predicted_cost:.4f} per hour"
